@@ -19,6 +19,7 @@ class FlamingoLayer(nn.Module):
         return self.vis_x is not None
 
     # Used this great idea from this implementation of Flamingo (https://github.com/dhansmair/flamingo-mini/)
+    # set vis_x and visual region token
     def condition_vis_x(self, vis_x, image_nums=None, image_start_index_list=None, num_beams=None, visual_tokens=None, data_list=None):
         self.vis_x = vis_x
         self.image_nums = image_nums
@@ -52,6 +53,7 @@ class FlamingoLayer(nn.Module):
                             hidden_states[x, y+1-self.visual_tokens[i].shape[0]:y+1] = self.visual_tokens[i]
                         else:
                             # print(self.visual_tokens[i].shape[0], "embedding")
+                            # replace box token hidden state with visual token?
                             hidden_states[x, y] = self.visual_tokens[i]
             elif not self.training:
                 if (

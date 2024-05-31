@@ -116,6 +116,8 @@ def create_model_and_transforms(
         image_size = open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"]["image_size"]
         patch_size = open_clip.get_model_config(clip_vision_encoder_path)["vision_cfg"]["patch_size"]
     assert image_size % patch_size == 0
+    
+    # patch-wise embedding
     vis_embed_size = (image_size // patch_size) ** 2
 
     lang_dim = int(lang_encoder.config.hidden_size)

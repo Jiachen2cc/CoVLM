@@ -65,6 +65,7 @@ def random_seed(seed=42, rank=0):
     random.seed(seed + rank)
 
 
+# split parameters: group parameters needing weight decay
 def get_grouped_params(model, args):
     params_with_wd, params_without_wd = [], []
 
@@ -90,8 +91,10 @@ def get_grouped_params(model, args):
 
 def main():
     parser = argparse.ArgumentParser()
+    # vision encoder
     parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
     parser.add_argument("--vision_encoder_pretrained", default="datacomp_xl_s13b_b90k", type=str)
+    # LLM
     parser.add_argument("--lm_path", default="EleutherAI/pythia-1.4b", type=str)
     parser.add_argument(
         "--tokenizer_path",
@@ -99,6 +102,7 @@ def main():
         type=str,
         help="path to tokenizer",
     )
+    # save name
     parser.add_argument(
         "--run_name",
         type=str,
@@ -125,6 +129,7 @@ def main():
         action="store_true",
         help="delete previous checkpoint when saving new checkpoint",
     )
+    # not sure what they are
     parser.add_argument(
         "--caption_shards",
         type=str,
@@ -146,6 +151,7 @@ def main():
     )
     parser.add_argument("--loss_multiplier_caption", type=float, default=1.0)
     parser.add_argument("--loss_multiplier_pile", type=float, default=1.0)
+    # detection model?
     parser.add_argument("--loss_multiplier_det", type=float, default=1.0)
     parser.add_argument("--warmup_steps", default=5000, type=int)
     # weight decay is only apply to YOLOX head if using FSDP

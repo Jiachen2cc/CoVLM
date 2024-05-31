@@ -25,6 +25,7 @@ class DetectionHead(nn.Module):
         )
 
     def forward(self, xin, labels):
+        # resize concatenated input?
         xin = [self.adapter(xin[0])]
         return self.yolox_head(xin=xin, labels=labels)
 
@@ -34,13 +35,17 @@ class Flamingo(nn.Module):
         self,
         vision_encoder: nn.Module,
         lang_encoder: nn.Module,
+        # ?
         eoc_token_id: int,
         media_token_id: int,
+        # the end of the image embedding?
         image_end_token_id: int,
+        # special token
         visual_token_id: int,
         previsual_token_id: int,
         box_token_id: int,
         prebox_token_id: int,
+        # ....
         endofobject_token_id: int,
         vis_dim: int,
         vis_embed_size: int,
@@ -65,6 +70,7 @@ class Flamingo(nn.Module):
         self.patch_size = patch_size
         self.vis_dim = vis_dim
         self.lang_dim = lang_dim
+        # align visual embedding dimension with language embedding dimension
         self.vis_proj = nn.Linear(self.vis_dim, self.lang_dim) if mm_projector is None else mm_projector
         self.vision_encoder = vision_encoder
         self.num_positions = vis_embed_size
@@ -75,11 +81,13 @@ class Flamingo(nn.Module):
         first_layer.media_token_id = media_token_id
         first_layer.box_token_id = box_token_id
         if mm_projector is not None:
+            # so self.langdim is image embedding dim
             self.detection_head = DetectionHead(patch_size, self.hidden_state_dim + self.lang_dim)
         else:
             self.detection_head = YOLOXHead(
                 num_classes=1,
                 strides=[patch_size],
+                # ? why input size is ?
                 in_channels=[self.hidden_state_dim + self.lang_dim],
             )
 
@@ -92,13 +100,17 @@ class Flamingo(nn.Module):
         added_bbox_list,
         box_num: int = 100,
     ):
+        # if enter visual or previsual
+        # input should be [batch,token_sequence]?
         select_mask = torch.logical_or(input_ids == visual_token_id, input_ids == previsual_token_id)
         visual_token_position = select_mask.nonzero()
+        # hidden state of all the visual or previsual token
         visual_token_hidden_states = hidden_states[select_mask]
         prev_batch_idx = -1
         media_idx = []
         cnt = 0
         assert len(visual_token_hidden_states) == len(visual_token_position)
+        #all bounding box added, we need num_box == num_visual_token
         if len(added_bbox_list) != len(visual_token_position):
             msg = f"ERROR: {len(added_bbox_list)}:{len(visual_token_position)}\n{added_bbox_list}\n{visual_token_position}"
             logging.info(msg)
@@ -115,22 +127,29 @@ class Flamingo(nn.Module):
             # ! VERY IMPORTANT !
             batch_idx = batch_idx.item()
             idx = idx.item()
+            # switch to current batch
             if batch_idx != prev_batch_idx:
                 prev_batch_idx = batch_idx
                 this_input_ids = input_ids[batch_idx]
-                cnt += len(media_idx)
+                cnt += len(media_idx) #?
+                # is media token representing object token?
                 media_idx = (this_input_ids == self.media_token_id).nonzero().reshape(-1).tolist()
             for i in range(len(media_idx)):
                 if i == len(media_idx) - 1 or idx > media_idx[i] and idx < media_idx[i+1]:
                     break
-            image_index = cnt + i
+            image_index = cnt + i  
+            # n**2,D -> size = n? patch_num?
             size = int(self.image_embedding[image_index].shape[0] ** 0.5)
             image_embedding = self.image_embedding[image_index]
+            # conver bbox to bounding box location
             bbox = xyxy2cxcywh(bbox) * self.image_size
             # print(bbox)
+            # N*N*2D
             concat_image_visual_embedding = torch.cat([image_embedding, visual_token_hidden_state.unsqueeze(0).repeat(image_embedding.shape[0], 1)], dim=-1).reshape(size, size, -1)
+            # bounding box label ?
             label = torch.cat([torch.zeros(bbox.shape[0], 1, device=bbox.device), bbox], dim=-1)
             label = torch.cat([label, torch.zeros(box_num - label.shape[0], label.shape[1], device=label.device)], dim=0)
+            # pack up embedding for visual and previsual token
             if input_ids[batch_idx, idx] == previsual_token_id:
                 previsual_batches.append([concat_image_visual_embedding, label])
             elif input_ids[batch_idx, idx] == visual_token_id:
@@ -157,6 +176,7 @@ class Flamingo(nn.Module):
         loss_dict = []
         for batches, alpha in zip([visual_token_batches, previsual_token_batches], [alpha1, alpha2]):
             # x: [B, C, H, W]
+            # prepare visual-language embedding and label batch
             if len(batches) != 0:
                 x = torch.cat([batch[0].unsqueeze(0) for batch in batches], dim=0).permute(0,3,1,2)
                 labels = torch.cat([batch[1].unsqueeze(0) for batch in batches], dim=0)
@@ -195,6 +215,8 @@ class Flamingo(nn.Module):
         score_thr: float = 0.01,
     ):
         assert len(input_ids) == 1, "only batch size = 1 is supported yet"
+        # if batch_size != 1, we can correctly select visual hidden state for all element
+        # how do we know which is the visual token?
         visual_token_hidden_state = hidden_states[..., -1, :]
         boxes_list = []
         scores_list = []
@@ -220,6 +242,7 @@ class Flamingo(nn.Module):
         if len(boxes_list) == 1:
             boxes_list = boxes_list[0]
             scores_list = scores_list[0]
+        # a list for possible boxes and corresponding scores
         return boxes_list, scores_list
 
     def forward(
@@ -256,14 +279,17 @@ class Flamingo(nn.Module):
                     input_ids=lang_x,
                 )
         output = self.lang_encoder(
-            input_ids=lang_x,
+            input_ids=lang_x, # language token?
             attention_mask=attention_mask,
             labels=labels,
             past_key_values=past_key_values,
             use_cache=use_cache,
             output_hidden_states=True,
         )
+        # how we know if last state is visual/previsual token or not?
+        # may be just last-level hidden states here
         hidden_states = output["hidden_states"][-1]
+        # if we know bounding box?
         if self.training and added_bbox_list is not None:
             detection_losses, loss_dict = self.get_detection_losses(
                 input_ids=lang_x,
@@ -272,6 +298,9 @@ class Flamingo(nn.Module):
             )
             output["detection_losses"] = detection_losses
             output["loss_dict"] = loss_dict
+        # seems this is inference mode?
+        # the input would not have <visual> token?
+        # so we directly assume -1 is related to some visual region?
         elif labels is None:
             boxes, scores = self.get_detection_result(
                 input_ids=lang_x,
@@ -350,6 +379,8 @@ class Flamingo(nn.Module):
         input_ids,
         vision_x,
     ):
+        # the box token location in current batch
+        # where we should pad bounding box feature?
         box_locations = (torch.logical_or(input_ids == box_token_id, input_ids == prebox_token_id)).nonzero()
         prev_batch_idx = -1
         media_idx = []
@@ -374,23 +405,28 @@ class Flamingo(nn.Module):
                     break
             image_index = cnt + i
             size = int(vision_x[image_index].shape[0] ** 0.5)
+            # vision_x is the feature list of image?
             image_feature = vision_x[image_index].reshape(size, size, -1)
             try:
                 raw_xyxy = all_box_list[III]
             except IndexError:
+                # why we may out of scope?
                 logging.info("out of scope for all_box_list")
                 raw_xyxy = all_box_list[-1]
             region_xyxy = np.array(raw_xyxy) * size
             x1, y1, x2, y2 = region_xyxy.astype(int).clip(0, size - 1).tolist()
             x2 = max(x1, x2)
             y2 = max(y1, y2)
+            # get vision feature for region specified by bounding box
             visual_token = image_feature[y1: y2 + 1, x1: x2 + 1].reshape(-1, image_feature.shape[-1]).mean(0)
             box = torch.tensor([0] + raw_xyxy, device=visual_token.device, dtype=visual_token.dtype)
+            # the region token may be further used 
             data_list.append([visual_token, box, batch_idx, idx, i])
             visual_tokens.append(visual_token)
         return data_list, visual_tokens
 
     def _encode_vision_x(self, vision_x: torch.Tensor, image_nums=None, image_start_index_list=None, added_bbox_list=None, num_beams=None, input_ids=None):
+        # batch_size, ? , frame, channel, height, width
         assert vision_x.ndim == 6, "vision_x should be of shape (b, T_img, F, C, H, W)"
         b, T, F = vision_x.shape[:3]
         assert F == 1, "Only single frame supported"
@@ -412,6 +448,7 @@ class Flamingo(nn.Module):
             all_box_list = added_bbox_list[0].tolist()
             for list in added_bbox_list[1:]:
                 all_box_list.extend(list.tolist())
+            # get visual token(for corresponding region related to box/prebox token)
             data_list, visual_tokens = self._get_data_list_and_visual_tokens(
                 all_box_list=all_box_list,
                 box_token_id=self.box_token_id,
@@ -419,6 +456,6 @@ class Flamingo(nn.Module):
                 input_ids=input_ids,
                 vision_x=vision_x,
             )
-
+        
         first_layer = self.lang_encoder._get_decoder_layers()[0]
         first_layer.condition_vis_x(vision_x, image_nums, image_start_index_list, num_beams=num_beams, visual_tokens=visual_tokens, data_list=[[d[2], d[3]] for d in data_list] if data_list is not None else data_list)

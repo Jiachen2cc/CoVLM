@@ -77,7 +77,8 @@ def train_one_epoch(
     world_size = torch.distributed.get_world_size()
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
-
+    
+    # special token used (seems no stateofobject)
     media_token_id = tokenizer("<|#image#|>", add_special_tokens=False)["input_ids"][-1]
     endofmedia_token_id = tokenizer("<|#endofimage#|>", add_special_tokens=False)["input_ids"][-1]
     visual_token_id = tokenizer("<|#visual#|>", add_special_tokens=False)["input_ids"][-1]
@@ -86,6 +87,7 @@ def train_one_epoch(
     endofattr_token_id = tokenizer("<|#endofattr#|>", add_special_tokens=False)["input_ids"][-1]
     prebox_token_id = tokenizer("<|#prebox#|>", add_special_tokens=False)["input_ids"][-1]
     previsual_token_id = tokenizer("<|#previsual#|>", add_special_tokens=False)["input_ids"][-1]
+    
     if args.rank == 0:
         logging.info(f"train from: {total_step} step")
     model.train()
@@ -106,6 +108,7 @@ def train_one_epoch(
             .unsqueeze(1)
             .unsqueeze(1)
         )
+        #? not quiet sure the attention mask
         image_nums = batch_laion[1]
         image_start_index_list = batch_laion[2]
 
@@ -115,7 +118,7 @@ def train_one_epoch(
         total_laion_token += int(attention_mask.sum().long()) * world_size
         total_laion_sample += sum(image_nums) * world_size
 
-
+        # the language label, these special tokens are not required?
         labels = input_ids.clone()
         labels[input_ids == visual_token_id] = -100
         labels[input_ids == box_token_id] = -100
